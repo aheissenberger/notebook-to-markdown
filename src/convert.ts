@@ -35,7 +35,7 @@ function nbCellsToMarkdown() {
 
     return new TransformStream({
         start(controller) {
-            controller.enqueue(`<script src="https://cdn.plot.ly/plotly-2.9.0.min.js"></script>` + "\n")
+            controller.enqueue(`<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>` + "\n")
         },
         transform(nbCell, controller) {
             switch (nbCell.language) {
@@ -57,23 +57,31 @@ function nbCellsToMarkdown() {
                         }
                         if (nbCell.language === 'shellscript' && !conf['shellscript-output']) break
                     }
-                default:
-                    for (const item of (nbCell?.outputs?.[0]?.items ?? [])) {
+                default: {
+                    for (const outputItem of (nbCell?.outputs ?? [])) {
+                        for (const item of (outputItem?.items ?? [])) {
 
-                        switch (item.mime) {
-                            case "text/html":
-                                controller.enqueue(item.value.join("\n"))
-                                break
-                            case "application/vnd.code.notebook.stdout":
-                                controller.enqueue("\n```\n" + item.value.join("\n") + "\n```\n")
-                                break
-                            case "text/plain":
-                                controller.enqueue("<pre>" + ansi_up.ansi_to_html(item.value.join("\n")) + "</pre>")
-                                break;
-                            case "application/vnd.ts.notebook.plotly+json": {
-                                const plotlyValue = item.value
-                                const output = `
-<div id="plotly${plotlyValue.requestId}"></div>
+                            switch (item.mime) {
+                                case "text/html":
+                                    controller.enqueue(item.value.join("\n"))
+                                    break
+                                case "application/vnd.code.notebook.stdout":
+                                    controller.enqueue("\n```\n" + item.value.join("\n") + "\n```\n")
+                                    break
+                                case "text/plain":
+                                    controller.enqueue('<pre style="break-inside: avoid;">' + ansi_up.ansi_to_html(item.value.join("\n")) + "</pre>")
+                                    break;
+                                case "text/markdown": {
+                                    const md = item.value.join("\n");
+                                    if (md !== '') {
+                                        controller.enqueue(md + "\n")
+                                    }
+                                    break
+                                }
+                                case "application/vnd.ts.notebook.plotly+json": {
+                                    const plotlyValue = item.value
+                                    const output = `
+<div id="plotly${plotlyValue.requestId}" style="break-inside: avoid;"></div>
 <script>
 Plotly.newPlot("plotly${plotlyValue.requestId}", {
     "data": ${JSON.stringify(plotlyValue.data)},
@@ -81,14 +89,16 @@ Plotly.newPlot("plotly${plotlyValue.requestId}", {
 })
 </script>
 `
-                                controller.enqueue(output)
-                                break
+                                    controller.enqueue(output)
+                                    break
+                                }
+                                default:
+                                    break;
                             }
-                            default:
-                                break;
                         }
                     }
                     break
+                }
             }
         }
     })
@@ -107,8 +117,6 @@ await Deno.stdin.readable
     .pipeThrough(new TextDecoderStream())
     .pipeThrough(jsonStreamToData())
     .pipeThrough(nbformatToCellStream)
-    //.pipeThrough(log)
     .pipeThrough(nbCellsToMarkdown())
-    //.pipeThrough(log)
     .pipeThrough(new TextEncoderStream())
     .pipeTo(Deno.stdout.writable)
